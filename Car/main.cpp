@@ -15,8 +15,8 @@ using namespace std::literals::chrono_literals;
 
 class Tank
 {
-	const unsigned int VOLUME = 60;			//Îáúåì áàêà (xàðàêòåðèñòèêà)
-	double fuel_level;						//Óðîâåíü òîïëèâà â áàêå (ñîñòîÿíèå)
+	const unsigned int VOLUME = 60;			//Объем бака (xарактеристика)
+	double fuel_level;						//Уровень топлива в баке (состояние)
 public:
 	unsigned int get_VOLUME()const
 	{
@@ -71,9 +71,10 @@ public:
 
 class Engine
 {
-	double consumption;				//Ðàñõîä òîïëèâà íà 100 êì
-	double consumption_per_second;	//Ðàñõîä çà 1 ñåêóíäó
+	double consumption;				//Расход топлива на 100 км
+	double consumption_per_second;	//Расход за 1 секунду
 	bool is_started;
+	int default_consumption;
 public:
 	double get_consumption()const
 	{
@@ -116,12 +117,23 @@ public:
 	Engine(double consumption)
 	{
 		set_consumption(consumption);
+		this->default_consumption = this->consumption;
 		is_started = false;
 		cout << "Engine is ready" << endl;
 	}
 	~Engine()
 	{
 		cout << "Engine is over" << endl;
+	}
+
+	void change_consumption(int speed)
+	{
+		set_consumption(default_consumption);
+		if (speed > 0 && speed <= 60)consumption_per_second *= 6;
+		else if (speed > 60 && speed <= 100)consumption_per_second *= 5;
+		else if (speed > 100 && speed <= 140)consumption_per_second *= 6;
+		else if (speed > 140 && speed <= 200)consumption_per_second *= 8;
+		else if (speed > 200 && speed <= 250)consumption_per_second *= 10;
 	}
 
 	void info()const
@@ -154,7 +166,7 @@ class Car
 	bool driver_inside;
 	int speed;
 	const int MAX_SPEED;
-	unsigned int accelleration;
+	int accelleration;
 
 	struct Control
 	{
@@ -164,14 +176,15 @@ class Car
 	}control;
 
 public:
-	Car(double consumption, unsigned int volume, int max_speed) :
+	Car(double consumption, unsigned int volume, int max_speed, int accelleration = 10) :
 		engine(consumption),
 		tank(volume),
 		MAX_SPEED(max_speed >= 80 && max_speed <= 400 ? max_speed : 180),
-		accelleration(10)
+		accelleration(20)
 	{
 		driver_inside = false;
 		speed = 0;
+		this->accelleration = accelleration;
 		cout << "Your car is ready: " << this << endl;
 	}
 	~Car()
@@ -208,6 +221,7 @@ public:
 		engine.stop();
 		if (control.engine_idle_thread.joinable())control.engine_idle_thread.join();
 	}
+#ifdef HOMEWORK
 	void free_wheeling()
 	{
 		while (speed > 0)
@@ -241,6 +255,8 @@ public:
 		}
 		std::this_thread::sleep_for(1s);
 	}
+#endif // HOMEWORK
+
 
 	void control_car()
 	{
@@ -253,31 +269,51 @@ public:
 			{
 			case 'F':case 'f':
 				double fuel;
-				cout << "Ââåäèòå îáúåì òîïëèâà: "; cin >> fuel;
+				cout << "Введите объем топлива: "; cin >> fuel;
 				fill(fuel);
 				break;
-			case 'I':case'i':
+			case 'I':case 'i':
 				if (engine.started())stop_engine();
 				else start_engine();
 				break;
+
+#ifdef HOMEWORK
 			case 'W':case 'w':case ArrowUp:
 				accelerate();
 				break;
 			case 'S':case 's':case ArrowDown:case Space:
 				slow_down();
 				break;
+#endif // HOMEWORK
+
 			case Enter:
 				if (driver_inside)get_out();
 				else get_in();
 				break;
+			case 'W':case 'w':
+				if (driver_inside && engine.started())
+				{
+					if (speed < MAX_SPEED)speed += accelleration;
+					if (speed > MAX_SPEED)speed = MAX_SPEED;
+					if (!control.free_wheeling_thread.joinable())
+						control.free_wheeling_thread = std::thread(&Car::free_wheeling, this);
+					std::this_thread::sleep_for(1s);
+				}
+				break;
+			case 'S':case 's':
+				if (speed > 0)speed -= accelleration;
+				if (speed < 0)speed = 0;
+				std::this_thread::sleep_for(1s);
+				break;
 			case Escape:
-				//if (control.free_wheeling_thread.joinable())control.free_wheeling_thread.join();
+				speed = 0;
 				stop_engine();
 				get_out();
 			default:
 				break;
 			}
 			if (tank.get_fuel_level() == 0)stop_engine();
+			if (speed == 0 && control.free_wheeling_thread.joinable())control.free_wheeling_thread.join();
 		} while (key != Escape);
 	}
 
@@ -291,11 +327,35 @@ public:
 		engine.stop();
 	}
 
+	void free_wheeling()
+	{
+		while (speed > 0)
+		{
+			speed--;
+			engine.change_consumption(speed);
+			std::this_thread::sleep_for(1s);
+		}
+		engine.change_consumption(speed);
+	}
+
+
+
 	void panel()const
 	{
 		while (driver_inside)
 		{
 			system("CLS");
+			HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+			int i = 0;
+			for (; i < speed * .4; i++)
+			{
+				if (i > 50)SetConsoleTextAttribute(hConsole, 0x0E);
+				if (i > 80)SetConsoleTextAttribute(hConsole, 0x0C);
+				cout << "|";
+			}
+			SetConsoleTextAttribute(hConsole, 0x07);
+			cout << i;
+			cout << endl;
 			cout << "Fuel level " << std::setprecision(4) << fixed << tank.get_fuel_level() << " liters.\t";
 			if (tank.get_fuel_level() < 5)
 			{
@@ -306,8 +366,15 @@ public:
 			}
 			cout << endl;
 			cout << "Engine is " << (engine.started() ? "started" : "stoped") << endl;
-			cout << "Max speed:\t" << MAX_SPEED << " km/h" << endl;;
-			cout << "Current speed: " << speed << " km/h" << endl;;
+			cout << "Speed: " << speed << " km/h\n";
+			cout << "Consumption: " << engine.get_consumption_per_second() << " liter/s\n";
+
+
+#ifdef HOMEWORK
+			cout << "Max speed:\t" << MAX_SPEED << " km/h" << endl;
+			cout << "Current speed: " << speed << " km/h" << endl;
+#endif // HOMEWORK
+
 			std::this_thread::sleep_for(500ms);
 		}
 	}
@@ -328,7 +395,7 @@ struct Control
 {
 	std::thread main_thread;
 	std::thread panel_thread;
-	std::thread ñonsumption_thread;
+	std::thread сonsumption_thread;
 }control;
 
 class Car
@@ -370,28 +437,28 @@ public:
 			cout << "Consumption per 100 km: " << engine.get_consumption() << " liters.\n";
 			cout << "Consumption per second: " << engine.get_consumption_per_second() << " liters.\n";
 			cout << "Consumption per hour  : " << engine.get_consumption_per_hour() << " liters.\n\n";
-			cout << "Óïðàâëåíèå ìàøèíîé:" << endl;
-			cout << "Enter - ñåñòü èëè âûéòè èç ìàøèíû " << endl;
-			cout << "F - çàïðàâèòü ìàøèíó" << endl;
-			cout << "S - çàïóñòèòü ìàøèíó" << endl;
-			cout << "Escape - âûéòè èç ïðîãðàììû" << endl;
+			cout << "Управление машиной:" << endl;
+			cout << "Enter - сесть или выйти из машины " << endl;
+			cout << "F - заправить машину" << endl;
+			cout << "S - запустить машину" << endl;
+			cout << "Escape - выйти из программы" << endl;
 			std::this_thread::sleep_for(1s);
 		}
 		system("CLS");
-		cout << "Íàæìèòå Enter ÷òîáû ñåñòü â ìàøèíó" << endl;
+		cout << "Нажмите Enter чтобы сесть в машину" << endl;
 	}
 	void start()
 	{
 		if (driver && tank.get_fuel_level() > 0)
 		{
 			engine.start();
-			control.ñonsumption_thread = thread(&Car::engine_idle, this);
+			control.сonsumption_thread = thread(&Car::engine_idle, this);
 		}
 	}
 	void stop()
 	{
 		engine.stop();
-		if (control.ñonsumption_thread.joinable())control.ñonsumption_thread.join();
+		if (control.сonsumption_thread.joinable())control.сonsumption_thread.join();
 	}
 	void engine_idle()
 	{
@@ -415,7 +482,7 @@ public:
 				break;
 			case 'F':case 'f':
 				double amount;
-				cout << "Ñêîëüêî çàïðàâèòü: "; cin >> amount;
+				cout << "Сколько заправить: "; cin >> amount;
 				tank.fill(amount);
 				break;
 			case 'S':case 's':
@@ -426,7 +493,7 @@ public:
 				stop();
 				get_out();
 			}
-			if (tank.get_fuel_level() == 0 && control.ñonsumption_thread.joinable())control.ñonsumption_thread.join();
+			if (tank.get_fuel_level() == 0 && control.сonsumption_thread.joinable())control.сonsumption_thread.join();
 		} while (key != 27);
 	}
 	void info()const
@@ -436,11 +503,11 @@ public:
 		engine.info();
 		cout << endl;
 		cout << endl;
-		cout << "Óïðàâëåíèå ìàøèíîé:" << endl;
-		cout << "Enter - ñåñòü èëè âûéòè èç ìàøèíû " << endl;
-		cout << "F - çàïðàâèòü ìàøèíó" << endl;
-		cout << "S - çàïóñòèòü ìàøèíó" << endl;
-		cout << "Escape - âûéòè èç ïðîãðàììû" << endl;
+		cout << "Управление машиной:" << endl;
+		cout << "Enter - сесть или выйти из машины " << endl;
+		cout << "F - заправить машину" << endl;
+		cout << "S - запустить машину" << endl;
+		cout << "Escape - выйти из программы" << endl;
 	}
 
 };
@@ -460,7 +527,7 @@ void main()
 	int fuel;
 	while (true)
 	{
-		cout << "Ââåäèòå îáúåì òîïëèâà: "; cin >> fuel;
+		cout << "Введите объем топлива: "; cin >> fuel;
 		tank.fill(fuel);
 		tank.info();
 	}
